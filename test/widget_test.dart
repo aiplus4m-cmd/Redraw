@@ -1,6 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/material.dart';
 import 'package:ve_lai_cho_dep/main.dart';
+import 'package:ve_lai_cho_dep/screens/settings_screen.dart';
+import 'package:ve_lai_cho_dep/services/ai/ai_provider.dart';
 import 'package:ve_lai_cho_dep/models/redraw_result.dart';
 import 'package:ve_lai_cho_dep/services/export_service.dart';
 import 'package:ve_lai_cho_dep/services/settings_service.dart';
@@ -14,7 +17,7 @@ void main() {
     await tester.pumpWidget(RedrawApp(settings: settings));
     await tester.pump();
     expect(find.text('Vẽ lại cho đẹp'), findsWidgets);
-    expect(find.text('Chưa nhập Anthropic API key'), findsOneWidget);
+    expect(find.text('Chưa cấu hình AI'), findsOneWidget);
   });
 
   test('RedrawResult parses table JSON and pads rows', () {
@@ -70,5 +73,39 @@ void main() {
       ),
       '<text font-family="Be Vietnam Pro">a</text>',
     );
+  });
+
+  testWidgets('Settings: custom provider shows Base URL and saves config', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final settings = await SettingsService.load();
+    await tester.pumpWidget(
+      MaterialApp(home: SettingsScreen(settings: settings)),
+    );
+    expect(find.text('Base URL'), findsNothing);
+
+    await tester.tap(find.byType(DropdownButtonFormField<AiProvider>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(AiProvider.custom.label).last);
+    await tester.pumpAndSettle();
+    expect(find.text('Base URL'), findsOneWidget);
+
+    await tester.tap(find.text('OpenRouter'));
+    final modelField = find.widgetWithIcon(TextField, Icons.memory_outlined);
+    await tester.scrollUntilVisible(
+      modelField,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.enterText(modelField, 'openai/gpt-5');
+    await tester.ensureVisible(find.text('Lưu & dùng Custom'));
+    await tester.tap(find.text('Lưu & dùng Custom'));
+    await tester.pumpAndSettle();
+
+    expect(settings.provider, AiProvider.custom);
+    expect(settings.activeConfig.baseUrl, 'https://openrouter.ai/api/v1');
+    expect(settings.activeConfig.model, 'openai/gpt-5');
+    expect(settings.isReady, isTrue);
   });
 }

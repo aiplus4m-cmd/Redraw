@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/redraw_result.dart';
-import '../services/claude_service.dart';
+import '../services/ai/ai_service.dart';
 import '../services/export_service.dart';
 import '../services/settings_service.dart';
 import '../widgets/progress_panel.dart';
@@ -149,16 +149,15 @@ class _ResultScreenState extends State<ResultScreen> {
       _busy = true;
       _progressChars = 0;
     });
-    final service = ClaudeService(
-      apiKey: widget.settings.apiKey,
-      model: widget.settings.model,
-    );
+    final service = AiService.create(widget.settings.activeConfig);
     try {
       final updated = await service.redraw(
-        image: widget.prepared,
-        extraInstructions: widget.settings.extraInstructions,
-        previous: _result,
-        refineInstruction: instruction,
+        RedrawRequest(
+          image: widget.prepared,
+          extraInstructions: widget.settings.extraInstructions,
+          previous: _result,
+          refineInstruction: instruction,
+        ),
         onProgress: (c) {
           if (mounted) setState(() => _progressChars = c);
         },
@@ -170,7 +169,7 @@ class _ResultScreenState extends State<ResultScreen> {
         _refineCtrl.clear();
         _showOriginal = false;
       });
-    } on ClaudeException catch (e) {
+    } on AiException catch (e) {
       _snack(e.message);
     } catch (e) {
       _snack('Đã có lỗi xảy ra: $e');

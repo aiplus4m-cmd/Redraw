@@ -7,7 +7,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../models/redraw_result.dart';
 import '../services/app_info.dart';
-import '../services/claude_service.dart';
+import '../services/ai/ai_service.dart';
 import '../services/settings_service.dart';
 import '../widgets/progress_panel.dart';
 import 'about_screen.dart';
@@ -67,14 +67,15 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _redraw() async {
     final bytes = _imageBytes;
     if (bytes == null) return;
-    if (!widget.settings.hasApiKey) {
+    final problem = widget.settings.activeConfig.problem;
+    if (problem != null) {
       final go = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Cần API key'),
-          content: const Text(
-            'Ứng dụng dùng Claude (Anthropic) để đọc và vẽ lại ảnh. '
-            'Hãy nhập Anthropic API key của bạn trong phần Cài đặt.',
+          title: const Text('Cần cấu hình AI'),
+          content: Text(
+            'Ứng dụng dùng AI (Claude, Gemini, OpenAI hoặc API tuỳ chỉnh) để đọc và '
+            'vẽ lại ảnh.\n\n$problem',
           ),
           actions: [
             TextButton(
@@ -96,16 +97,15 @@ class _HomeScreenState extends State<HomeScreen> {
       _busy = true;
       _progressChars = 0;
     });
-    final service = ClaudeService(
-      apiKey: widget.settings.apiKey,
-      model: widget.settings.model,
-    );
+    final service = AiService.create(widget.settings.activeConfig);
     try {
-      final prepared = await ClaudeService.prepareImage(bytes);
+      final prepared = await prepareImage(bytes);
       final result = await service.redraw(
-        image: prepared,
-        mode: _mode,
-        extraInstructions: widget.settings.extraInstructions,
+        RedrawRequest(
+          image: prepared,
+          mode: _mode,
+          extraInstructions: widget.settings.extraInstructions,
+        ),
         onProgress: (c) {
           if (mounted) setState(() => _progressChars = c);
         },
@@ -121,7 +121,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       );
-    } on ClaudeException catch (e) {
+    } on AiException catch (e) {
       _showError(e.message);
     } catch (e) {
       _showError('Đã có lỗi xảy ra: $e');
@@ -205,19 +205,34 @@ class _HomeScreenState extends State<HomeScreen> {
                   'Chữ viết tay → văn bản. Xuất ảnh PNG, PDF hoặc tệp văn bản.',
                   style: TextStyle(color: scheme.onSurfaceVariant),
                 ),
-                if (!widget.settings.hasApiKey) ...[
-                  const SizedBox(height: 16),
+                const SizedBox(height: 16),
+                if (!widget.settings.isReady)
                   Card(
                     color: scheme.secondaryContainer,
                     child: ListTile(
                       leading: const Icon(Icons.key_outlined),
-                      title: const Text('Chưa nhập Anthropic API key'),
-                      subtitle: const Text('Cần có key để ứng dụng hoạt động.'),
+                      title: const Text('Chưa cấu hình AI'),
+                      subtitle: Text(
+                        widget.settings.activeConfig.problem ?? '',
+                      ),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: _openSettings,
                     ),
+                  )
+                else
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: ActionChip(
+                      avatar: const Icon(Icons.memory_outlined, size: 18),
+                      label: Text(
+                        '${widget.settings.provider.shortLabel} · '
+                        '${widget.settings.activeConfig.model}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      tooltip: 'Đổi nhà cung cấp / model trong Cài đặt',
+                      onPressed: _busy ? null : _openSettings,
+                    ),
                   ),
-                ],
                 const SizedBox(height: 20),
                 _ImageDropZone(
                   bytes: _imageBytes,

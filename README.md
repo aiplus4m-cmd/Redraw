@@ -38,17 +38,29 @@
 1. Tải về từ trang [Releases](../../releases/latest):
    - Windows: `VeLaiChoDep-Setup-x.y.z.exe` (cài đặt) hoặc `VeLaiChoDep-x.y.z-windows-portable.zip` (giải nén rồi chạy `VeLaiChoDep.exe`).
    - Android: `VeLaiChoDep-x.y.z.apk` (cho phép “Cài ứng dụng không rõ nguồn gốc” khi được hỏi).
-2. Mở ứng dụng → **Cài đặt** → dán **Anthropic API key** (tạo tại [console.anthropic.com](https://console.anthropic.com/settings/keys)).
-   Key chỉ lưu trên máy của bạn và được gửi thẳng tới `api.anthropic.com`.
+2. Mở ứng dụng → **Cài đặt** → chọn **nhà cung cấp AI**, nhập **API key** và **model** (xem bảng bên dưới).
+   Key chỉ lưu trên máy của bạn và được gửi thẳng tới máy chủ của nhà cung cấp.
 3. Chọn / chụp ảnh → bấm **Vẽ lại cho đẹp** → xem kết quả → **Lưu** hoặc **Chia sẻ**.
 
-> Ứng dụng dùng mô hình AI **Claude** của Anthropic (mặc định Claude Opus 5.5; có thể đổi sang Sonnet 5.5 hoặc Fable 5.1 trong Cài đặt).
-> Chi phí gọi API tính theo tài khoản Anthropic của bạn.
+### Nhà cung cấp AI
+
+| Nhà cung cấp | Cần nhập | Model mặc định | Lấy API key |
+|---|---|---|---|
+| **Anthropic Claude** | API key, model | `claude-opus-5-5` | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| **Google Gemini** | API key, model | `gemini-pro-latest` | [aistudio.google.com](https://aistudio.google.com/apikey) |
+| **OpenAI** | API key, model | `gpt-5` | [platform.openai.com](https://platform.openai.com/api-keys) |
+| **Custom API** (tương thích OpenAI) | **Base URL**, API key (tuỳ chọn), model | — | OpenRouter, DeepSeek, Groq, Ollama, LM Studio, vLLM… |
+
+- **Model nhập tự do**: gõ tên model bất kỳ, chọn nhanh từ gợi ý, hoặc bấm biểu tượng danh sách để **tải danh sách model thật** từ máy chủ.
+- **Kiểm tra kết nối** ngay trong Cài đặt.
+- Custom API gọi `<Base URL>/chat/completions`, ví dụ `https://openrouter.ai/api/v1` hoặc `http://localhost:11434/v1` (Ollama). Model phải hỗ trợ đọc ảnh (vision).
+- Ứng dụng ưu tiên chế độ JSON có schema chặt chẽ; nếu model/máy chủ không hỗ trợ (HTTP 400), tự động thử lại với cấu hình đơn giản hơn.
+- Chi phí gọi API tính theo tài khoản của bạn ở nhà cung cấp tương ứng.
 
 ## Cách hoạt động
 
 ```
-Ảnh ──► thu nhỏ/chuẩn hoá (≤ 2400px, JPEG) ──► Claude Messages API (vision + structured output)
+Ảnh ──► thu nhỏ/chuẩn hoá (≤ 2400px, JPEG) ──► Claude / Gemini / OpenAI / Custom (vision + JSON)
                                                      │
                      ┌───────────────────────────────┼───────────────────────────────┐
                  kind=diagram                    kind=table                      kind=text
@@ -62,7 +74,11 @@ Mã nguồn chính:
 
 | Tệp | Vai trò |
 |---|---|
-| `lib/services/claude_service.dart` | Gọi Claude API (streaming, JSON schema, xử lý lỗi/refusal, server-side fallback) |
+| `lib/services/ai/ai_service.dart` | Giao diện chung + cơ chế thử lại với cấu hình đơn giản hơn |
+| `lib/services/ai/anthropic_service.dart` | Anthropic Messages API (streaming, JSON schema, refusal, server-side fallback) |
+| `lib/services/ai/gemini_service.dart` | Google Gemini `streamGenerateContent` |
+| `lib/services/ai/openai_service.dart` | OpenAI và mọi API tương thích OpenAI (`/chat/completions`) |
+| `lib/services/ai/ai_common.dart` | Prompt, JSON schema, xử lý ảnh, đọc SSE, thông báo lỗi |
 | `lib/services/export_service.dart` | Tạo PNG / PDF / TXT / CSV, lưu & chia sẻ tệp |
 | `lib/screens/` | Màn hình Trang chính, Kết quả, Cài đặt, Giới thiệu |
 | `lib/widgets/result_views.dart` | Hiển thị sơ đồ, bảng, văn bản |

@@ -85,7 +85,8 @@ class AboutScreen extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               Text(
-                'Sử dụng mô hình Claude của Anthropic để nhận diện và vẽ lại nội dung. '
+                'Dùng AI (Anthropic Claude, Google Gemini, OpenAI hoặc API tương thích OpenAI) '
+                'để nhận diện và vẽ lại nội dung. '
                 'Font chữ Be Vietnam Pro (SIL Open Font License).',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
