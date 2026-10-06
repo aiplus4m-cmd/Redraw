@@ -29,6 +29,13 @@ enum RedrawMode {
   final String label;
 }
 
+/// flutter_svg treats a font-family list as one family name, so pin every
+/// text element to the bundled Vietnamese-capable font.
+String normalizeSvg(String svg) => svg.trim().replaceAllMapped(
+  RegExp(r"""font-family\s*=\s*("[^"]*"|'[^']*')"""),
+  (_) => 'font-family="Be Vietnam Pro"',
+);
+
 class RedrawResult {
   RedrawResult({
     required this.kind,
@@ -60,7 +67,7 @@ class RedrawResult {
       kind: RedrawKind.parse(json['kind'] as String? ?? 'text'),
       title: (json['title'] as String? ?? '').trim(),
       summary: (json['summary'] as String? ?? '').trim(),
-      svg: (json['svg'] as String? ?? '').trim(),
+      svg: normalizeSvg(json['svg'] as String? ?? ''),
       headers: [
         for (final h in (table['headers'] as List? ?? const [])) h.toString(),
       ],

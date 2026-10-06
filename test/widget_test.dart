@@ -62,4 +62,13 @@ void main() {
     final csv = String.fromCharCodes(ExportService.buildCsv(r).skip(3));
     expect(csv, 'a,b\r\n"x,y","say ""hi"""');
   });
+
+  test('normalizeSvg pins font family to the bundled font', () {
+    expect(
+      normalizeSvg(
+        '<text font-family="Be Vietnam Pro, Arial, sans-serif">a</text>',
+      ),
+      '<text font-family="Be Vietnam Pro">a</text>',
+    );
+  });
 }
