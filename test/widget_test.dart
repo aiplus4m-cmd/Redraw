@@ -99,7 +99,11 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     await tester.enterText(modelField, 'openai/gpt-5');
-    await tester.ensureVisible(find.text('Lưu & dùng Custom'));
+    await tester.scrollUntilVisible(
+      find.text('Lưu & dùng Custom'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.tap(find.text('Lưu & dùng Custom'));
     await tester.pumpAndSettle();
 

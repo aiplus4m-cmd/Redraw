@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../services/ai/ai_provider.dart';
 import '../services/ai/ai_service.dart';
+import '../services/ai/image_service.dart';
 import '../services/settings_service.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -37,6 +38,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late AiProvider _provider;
   late final Map<AiProvider, _ProviderFields> _fields;
   late final TextEditingController _instrCtrl;
+  late ImageEngine _imageEngine;
+  late final TextEditingController _openAiImageCtrl;
+  late final TextEditingController _geminiImageCtrl;
   bool _obscure = true;
   bool _testing = false;
 
@@ -57,6 +61,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
         p: _ProviderFields(widget.settings.configFor(p)),
     };
     _instrCtrl = TextEditingController(text: widget.settings.extraInstructions);
+    _imageEngine = widget.settings.imageEngine;
+    // Refresh the "API key present" chips of the artwork section.
+    for (final p in [AiProvider.openai, AiProvider.google]) {
+      _fields[p]!.key.addListener(() {
+        if (mounted) setState(() {});
+      });
+    }
+    _openAiImageCtrl = TextEditingController(
+      text: widget.settings.openAiImageModel,
+    );
+    _geminiImageCtrl = TextEditingController(
+      text: widget.settings.geminiImageModel,
+    );
   }
 
   @override
@@ -65,6 +82,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       f.dispose();
     }
     _instrCtrl.dispose();
+    _openAiImageCtrl.dispose();
+    _geminiImageCtrl.dispose();
     super.dispose();
   }
 
@@ -91,6 +110,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       active: _provider,
       configs: {for (final p in AiProvider.values) p: _configOf(p)},
       extraInstructions: _instrCtrl.text,
+      imageEngine: _imageEngine,
+      openAiImageModel: _openAiImageCtrl.text,
+      geminiImageModel: _geminiImageCtrl.text,
     );
     if (!mounted) return;
     _snack('Đã lưu cài đặt');
@@ -162,6 +184,98 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (chosen != null) setState(() => _current.model.text = chosen);
   }
 
+  bool _hasKey(AiProvider p) => _fields[p]!.key.text.trim().isNotEmpty;
+
+  List<Widget> _artSection(TextStyle? titleStyle, TextStyle hintStyle) {
+    final showOpenAi =
+        _imageEngine == ImageEngine.auto || _imageEngine == ImageEngine.openai;
+    final showGemini =
+        _imageEngine == ImageEngine.auto || _imageEngine == ImageEngine.google;
+
+    Widget keyStatus(AiProvider p) => Chip(
+      avatar: Icon(
+        _hasKey(p) ? Icons.check_circle_outline : Icons.error_outline,
+        size: 18,
+      ),
+      label: Text(
+        _hasKey(p)
+            ? 'Đã có API key ${p.shortLabel}'
+            : 'Chưa có API key ${p.shortLabel}',
+      ),
+    );
+
+    Widget modelField(TextEditingController c, String label, String def) =>
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: TextField(
+            controller: c,
+            autocorrect: false,
+            decoration: InputDecoration(
+              border: const OutlineInputBorder(),
+              labelText: label,
+              hintText: def,
+              prefixIcon: const Icon(Icons.image_outlined),
+            ),
+          ),
+        );
+
+    return [
+      Text('Vẽ lại tranh', style: titleStyle),
+      const SizedBox(height: 6),
+      Text(
+        'Khi ảnh là tranh vẽ, ứng dụng dùng model tạo ảnh để vẽ lại tranh đẹp '
+        '(giữ bố cục gốc). Không có model tạo ảnh thì ứng dụng vẽ bản vector.',
+        style: hintStyle,
+      ),
+      const SizedBox(height: 10),
+      DropdownButtonFormField<ImageEngine>(
+        isExpanded: true,
+        initialValue: _imageEngine,
+        decoration: const InputDecoration(
+          border: OutlineInputBorder(),
+          prefixIcon: Icon(Icons.palette_outlined),
+        ),
+        items: [
+          for (final e in ImageEngine.values)
+            DropdownMenuItem(
+              value: e,
+              child: Text(e.label, overflow: TextOverflow.ellipsis),
+            ),
+        ],
+        onChanged: (e) => setState(() => _imageEngine = e ?? _imageEngine),
+      ),
+      if (showOpenAi || showGemini) ...[
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            if (showOpenAi) keyStatus(AiProvider.openai),
+            if (showGemini) keyStatus(AiProvider.google),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Dùng chung API key đã nhập cho OpenAI / Google Gemini ở mục '
+          '"Nhà cung cấp AI" phía trên (chọn nhà cung cấp đó để nhập key).',
+          style: hintStyle,
+        ),
+      ],
+      if (showOpenAi)
+        modelField(
+          _openAiImageCtrl,
+          'Model tạo ảnh OpenAI',
+          defaultOpenAiImageModel,
+        ),
+      if (showGemini)
+        modelField(
+          _geminiImageCtrl,
+          'Model tạo ảnh Gemini',
+          defaultGeminiImageModel,
+        ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -180,6 +294,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Text('Nhà cung cấp AI', style: titleStyle),
               const SizedBox(height: 8),
               DropdownButtonFormField<AiProvider>(
+                isExpanded: true,
                 initialValue: _provider,
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
@@ -187,7 +302,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 items: [
                   for (final p in AiProvider.values)
-                    DropdownMenuItem(value: p, child: Text(p.label)),
+                    DropdownMenuItem(
+                      value: p,
+                      child: Text(p.label, overflow: TextOverflow.ellipsis),
+                    ),
                 ],
                 onChanged: (p) => setState(() {
                   _provider = p ?? _provider;
@@ -331,6 +449,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   label: const Text('Kiểm tra kết nối'),
                 ),
               ),
+              const Divider(height: 40),
+              ..._artSection(titleStyle, hintStyle),
               const Divider(height: 40),
               Text('Phong cách mặc định (không bắt buộc)', style: titleStyle),
               const SizedBox(height: 8),

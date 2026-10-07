@@ -1,17 +1,21 @@
 import 'package:flutter/material.dart';
 
-/// Shown while Claude is analysing the image.
+/// Shown while the AI is working.
 class ProgressPanel extends StatelessWidget {
-  const ProgressPanel({super.key, required this.chars});
+  const ProgressPanel({super.key, required this.chars, this.status = ''});
 
   final int chars;
+  final String status;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final status = chars == 0
-        ? 'Đang đọc và phân tích ảnh…'
-        : 'Đang vẽ lại… (${(chars / 1000).toStringAsFixed(1)}k ký tự)';
+    final base = status.isNotEmpty
+        ? status
+        : (chars == 0 ? 'Đang đọc và phân tích ảnh…' : 'Đang vẽ lại…');
+    final line = chars > 0
+        ? '$base (${(chars / 1000).toStringAsFixed(1)}k ký tự)'
+        : base;
     return Card(
       color: scheme.primaryContainer.withValues(alpha: 0.5),
       child: Padding(
@@ -29,7 +33,7 @@ class ProgressPanel extends StatelessWidget {
                 const SizedBox(width: 14),
                 Expanded(
                   child: Text(
-                    status,
+                    line,
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                 ),

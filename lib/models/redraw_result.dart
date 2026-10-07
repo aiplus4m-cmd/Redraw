@@ -1,15 +1,18 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 /// Kind of document detected in the input image.
 enum RedrawKind {
   diagram,
   table,
-  text;
+  text,
+  artwork;
 
   String get label => switch (this) {
     RedrawKind.diagram => 'Sơ đồ / lưu đồ',
     RedrawKind.table => 'Bảng biểu',
     RedrawKind.text => 'Văn bản',
+    RedrawKind.artwork => 'Tranh vẽ',
   };
 
   static RedrawKind parse(String value) => RedrawKind.values.firstWhere(
@@ -23,7 +26,8 @@ enum RedrawMode {
   auto('Tự nhận diện'),
   diagram('Sơ đồ'),
   table('Bảng'),
-  text('Văn bản');
+  text('Văn bản'),
+  artwork('Tranh');
 
   const RedrawMode(this.label);
   final String label;
@@ -45,6 +49,7 @@ class RedrawResult {
     this.headers = const [],
     this.rows = const [],
     this.text = '',
+    this.imagePrompt = '',
   });
 
   final RedrawKind kind;
@@ -61,6 +66,17 @@ class RedrawResult {
   /// Text: transcription using a light markdown subset (#, ##, -, 1.).
   String text;
 
+  /// Artwork: detailed English description used to repaint the picture with
+  /// an image-generation model ([svg] holds the vector fallback).
+  final String imagePrompt;
+
+  /// Artwork: picture repainted by an image-generation model (PNG/JPEG/WEBP
+  /// bytes), when one is configured and succeeded.
+  Uint8List? artImage;
+
+  /// Artwork: why [artImage] is missing (shown to the user), if relevant.
+  String artNote = '';
+
   factory RedrawResult.fromJson(Map<String, dynamic> json) {
     final table = (json['table'] as Map?)?.cast<String, dynamic>() ?? const {};
     return RedrawResult(
@@ -76,6 +92,7 @@ class RedrawResult {
           [for (final c in (r as List)) c.toString()],
       ],
       text: (json['text'] as String? ?? '').trim(),
+      imagePrompt: (json['image_prompt'] as String? ?? '').trim(),
     );
   }
 
@@ -86,6 +103,7 @@ class RedrawResult {
     'svg': svg,
     'table': {'headers': headers, 'rows': rows},
     'text': text,
+    'image_prompt': imagePrompt,
   };
 
   String toPrettyJson() => const JsonEncoder.withIndent('  ').convert(toJson());

@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/art_style.dart';
 import 'ai/ai_provider.dart';
+import 'ai/image_service.dart';
 
 /// Persisted user settings: active AI provider, per-provider connection
 /// settings and default style instructions.
@@ -12,6 +14,10 @@ class SettingsService extends ChangeNotifier {
 
   static const _kProvider = 'provider';
   static const _kInstructions = 'extra_instructions';
+  static const _kImageEngine = 'image_engine';
+  static const _kOpenAiImageModel = 'openai_image_model';
+  static const _kGeminiImageModel = 'google_image_model';
+  static const _kArtStyle = 'art_style';
 
   final SharedPreferences _prefs;
 
@@ -49,11 +55,63 @@ class SettingsService extends ChangeNotifier {
 
   bool get isReady => activeConfig.problem == null;
 
+  // ------------------------------------------------------------ artwork
+
+  ImageEngine get imageEngine =>
+      ImageEngine.parse(_prefs.getString(_kImageEngine));
+
+  String get openAiImageModel =>
+      _nonEmpty(_prefs.getString(_kOpenAiImageModel), defaultOpenAiImageModel);
+
+  String get geminiImageModel =>
+      _nonEmpty(_prefs.getString(_kGeminiImageModel), defaultGeminiImageModel);
+
+  ArtStyle get artStyle => ArtStyle.parse(_prefs.getString(_kArtStyle));
+
+  static String _nonEmpty(String? v, String fallback) =>
+      (v == null || v.trim().isEmpty) ? fallback : v.trim();
+
+  ImageBackend? _backendFor(AiProvider p) {
+    final config = configFor(p);
+    if (config.apiKey.trim().isEmpty) return null;
+    return ImageBackend(
+      config,
+      p == AiProvider.google ? geminiImageModel : openAiImageModel,
+    );
+  }
+
+  /// The image-generation back-end used to repaint artwork, or null when
+  /// only the vector redraw is available.
+  ImageBackend? get imageBackend => switch (imageEngine) {
+    ImageEngine.openai => _backendFor(AiProvider.openai),
+    ImageEngine.google => _backendFor(AiProvider.google),
+    ImageEngine.vector => null,
+    ImageEngine.auto =>
+      _backendFor(AiProvider.openai) ?? _backendFor(AiProvider.google),
+  };
+
+  Future<void> saveArtStyle(ArtStyle style) async {
+    await _prefs.setString(_kArtStyle, style.name);
+    notifyListeners();
+  }
+
   Future<void> save({
     required AiProvider active,
     required Map<AiProvider, ProviderConfig> configs,
     required String extraInstructions,
+    ImageEngine? imageEngine,
+    String? openAiImageModel,
+    String? geminiImageModel,
   }) async {
+    if (imageEngine != null) {
+      await _prefs.setString(_kImageEngine, imageEngine.name);
+    }
+    if (openAiImageModel != null) {
+      await _prefs.setString(_kOpenAiImageModel, openAiImageModel.trim());
+    }
+    if (geminiImageModel != null) {
+      await _prefs.setString(_kGeminiImageModel, geminiImageModel.trim());
+    }
     await _prefs.setString(_kProvider, active.name);
     for (final c in configs.values) {
       await _prefs.setString(_keyOf(c.provider), c.apiKey.trim());

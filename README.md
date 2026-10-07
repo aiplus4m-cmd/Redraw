@@ -7,8 +7,8 @@
 </h1>
 
 <p align="center">
-  Biến ảnh chụp <b>sơ đồ vẽ tay</b>, <b>bảng biểu nguệch ngoạc</b> hay <b>ghi chép viết tay</b>
-  thành bản trình bày gọn gàng, chuyên nghiệp — xuất ra <b>ảnh PNG</b>, <b>PDF</b> hoặc <b>tệp văn bản</b>.
+  Biến ảnh chụp <b>sơ đồ vẽ tay</b>, <b>bảng biểu nguệch ngoạc</b>, <b>ghi chép viết tay</b> hay <b>tranh vẽ xấu xí</b>
+  thành bản trình bày gọn gàng, chuyên nghiệp và tranh đẹp — xuất ra <b>ảnh PNG</b>, <b>PDF</b> hoặc <b>tệp văn bản</b>.
 </p>
 
 <p align="center">
@@ -25,8 +25,9 @@
 | Lưu đồ, sơ đồ quy trình, mind map, sơ đồ tổ chức… vẽ tay | Nhận diện các khối, mũi tên, nhãn rồi **vẽ lại** bằng hình chuẩn, bố cục thẳng hàng, màu sắc hài hoà | PNG, PDF, SVG |
 | Bảng kẻ tay / ảnh chụp bảng trình bày xấu | Trích xuất đầy đủ hàng–cột, **dựng lại bảng** có tiêu đề, kẻ viền, tô màu xen kẽ | PNG, PDF, CSV (mở bằng Excel) |
 | Chữ viết tay, ghi chép, thư từ | **Chép lại thành văn bản** giữ nguyên tiếng Việt có dấu, tiêu đề, gạch đầu dòng; sửa được trực tiếp | TXT, PDF, PNG |
+| Tranh vẽ, phác thảo, tranh thiếu nhi, tranh tô màu xấu… | **Vẽ lại bức tranh thật đẹp**, giữ nguyên nhân vật, bố cục, màu chủ đạo; chọn phong cách (màu nước, sơn dầu, hoạt hình, anime, 3D…) | PNG, PDF, SVG |
 
-- **Tự nhận diện** loại nội dung, hoặc tự chọn: Sơ đồ / Bảng / Văn bản.
+- **Tự nhận diện** loại nội dung, hoặc tự chọn: Sơ đồ / Bảng / Văn bản / Tranh.
 - **So sánh** bản đẹp với ảnh gốc chỉ bằng một chạm.
 - **Chỉnh sửa bằng lời**: “đổi bố cục sang ngang”, “thêm cột Ghi chú”, “tô xanh bước kết thúc”… rồi bấm *Vẽ lại theo yêu cầu*.
 - **Phong cách mặc định** tuỳ chỉnh trong Cài đặt (màu sắc, hướng bố cục…).
@@ -41,6 +42,17 @@
 2. Mở ứng dụng → **Cài đặt** → chọn **nhà cung cấp AI**, nhập **API key** và **model** (xem bảng bên dưới).
    Key chỉ lưu trên máy của bạn và được gửi thẳng tới máy chủ của nhà cung cấp.
 3. Chọn / chụp ảnh → bấm **Vẽ lại cho đẹp** → xem kết quả → **Lưu** hoặc **Chia sẻ**.
+
+### Vẽ lại tranh
+
+Khi ảnh là tranh vẽ, ứng dụng làm 2 bước:
+
+1. Model AI đọc ảnh (nhà cung cấp đang chọn) nhận diện tranh, mô tả chi tiết nội dung và vẽ sẵn **bản vector (SVG)**.
+2. Nếu có API key **OpenAI** hoặc **Google Gemini**, model **tạo ảnh** vẽ lại bức tranh dựa trên ảnh gốc (giữ bố cục) theo **phong cách** bạn chọn:
+   - OpenAI: `POST /v1/images/edits`, mặc định `gpt-image-2`
+   - Gemini: `generateContent` với `responseModalities: ["IMAGE"]`, mặc định `gemini-3.1-flash-image-preview`
+
+Cấu hình ở **Cài đặt → Vẽ lại tranh** (Tự động / OpenAI / Gemini / Chỉ vector, đổi được tên model tạo ảnh). Ở màn hình kết quả có thể chuyển giữa **Tranh AI** và **Bản vector**, đổi phong cách rồi bấm **Vẽ lại tranh** (không cần phân tích lại ảnh), hoặc gõ yêu cầu như “thêm bầu trời hoàng hôn”.
 
 ### Nhà cung cấp AI
 
@@ -79,6 +91,8 @@ Mã nguồn chính:
 | `lib/services/ai/gemini_service.dart` | Google Gemini `streamGenerateContent` |
 | `lib/services/ai/openai_service.dart` | OpenAI và mọi API tương thích OpenAI (`/chat/completions`) |
 | `lib/services/ai/ai_common.dart` | Prompt, JSON schema, xử lý ảnh, đọc SSE, thông báo lỗi |
+| `lib/services/ai/image_service.dart` | Vẽ lại tranh bằng OpenAI Images / Gemini image |
+| `lib/services/redraw_pipeline.dart` | Quy trình: phân tích ảnh → (nếu là tranh) tạo ảnh |
 | `lib/services/export_service.dart` | Tạo PNG / PDF / TXT / CSV, lưu & chia sẻ tệp |
 | `lib/screens/` | Màn hình Trang chính, Kết quả, Cài đặt, Giới thiệu |
 | `lib/widgets/result_views.dart` | Hiển thị sơ đồ, bảng, văn bản |

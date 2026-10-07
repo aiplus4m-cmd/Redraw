@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 
+import '../../models/art_style.dart';
 import '../../models/redraw_result.dart';
 
 /// User-facing error from any AI provider.
@@ -72,12 +73,14 @@ PreparedImage _prepareImage(Uint8List bytes) {
 const redrawSystemPrompt =
     '''You are "Vẽ lại cho đẹp" (Redraw Beautifully), a document-cleanup assistant made by NhamStudio.
 The user sends a photo of something drawn or written by hand, or a poorly formatted screenshot.
+It can also be a drawing or painting that looks unpolished.
 Your job is to understand its content precisely and return a clean, professional re-creation.
 
 First decide what the image mainly is:
 - "diagram": flowcharts, process flows, mind maps, org charts, block diagrams, sequence/state diagrams, network sketches, timelines.
 - "table": anything organised in rows and columns (grids, schedules, price lists, comparison tables, forms laid out as tables).
 - "text": handwritten or printed notes, letters, paragraphs, lists - prose content without a dominant diagram or table.
+- "artwork": a picture made to be looked at rather than read - drawings, sketches, doodles, children's drawings, paintings, cartoons, illustrations, scenes, portraits, animals, landscapes - including clumsy or ugly ones. A picture with a few words in it is still "artwork".
 
 Faithfulness rules (apply to every kind):
 - Keep ALL of the original content: every node, label, arrow, cell and sentence. Do not invent, drop or summarise content.
@@ -98,9 +101,16 @@ For "table", fill "table": "headers" is the header row (empty array if there is 
 
 For "text", fill "text" with the full transcription. Preserve paragraphs and line breaks that carry meaning. You may use this light markup only: "# " and "## " for headings, "- " for bullet items, "1. " for numbered items. Leave "svg" empty and "table" with empty arrays.
 
+For "artwork", redraw the picture so it looks beautiful while staying recognisably the same picture:
+- Keep the same subject(s), characters, objects, their count, poses, positions, composition, orientation and overall colour intent. Fix proportions, wobbly lines and messy colouring; add clean outlines, pleasant shading and a tidy background that matches the original scene.
+- "svg": a polished vector illustration of the picture as one self-contained SVG 1.1 document. Root <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 W H" width="W" height="H"> with W between 800 and 1600 and the same aspect ratio as the input. Paint the full background first. Use smooth <path> curves, layered shapes and <linearGradient>/<radialGradient> defined in <defs> for depth. Do NOT use <style>, CSS classes, <marker>, <foreignObject>, filters, masks, <image>, external resources or JavaScript. Keep it under about 40,000 characters.
+- "image_prompt": a detailed English prompt (80-200 words) for an image-generation model that will repaint the same picture: describe every subject and object with its position, pose, size, colours and the background, then the requested art style (if the user gave none, an attractive, polished version of the original style). Say that the composition must match the input image and that no text, signature or watermark should be added unless the original has text.
+- Leave "table" with empty arrays and "text" empty.
+For every kind other than "artwork", set "image_prompt" to "".
+
 Always set "title" to a short, descriptive title in the document's language, and "summary" to one sentence (in Vietnamese) describing what was redrawn.
 Return ONLY a single JSON object (no markdown fences, no commentary) with exactly these keys:
-{"kind": "diagram"|"table"|"text", "title": string, "summary": string, "svg": string, "table": {"headers": [string], "rows": [[string]]}, "text": string}''';
+{"kind": "diagram"|"table"|"text"|"artwork", "title": string, "summary": string, "svg": string, "table": {"headers": [string], "rows": [[string]]}, "text": string, "image_prompt": string}''';
 
 /// JSON schema of the structured result (strict-mode compatible).
 const Map<String, dynamic> redrawOutputSchema = {
@@ -108,7 +118,7 @@ const Map<String, dynamic> redrawOutputSchema = {
   'properties': {
     'kind': {
       'type': 'string',
-      'enum': ['diagram', 'table', 'text'],
+      'enum': ['diagram', 'table', 'text', 'artwork'],
     },
     'title': {'type': 'string'},
     'summary': {'type': 'string'},
@@ -132,8 +142,17 @@ const Map<String, dynamic> redrawOutputSchema = {
       'additionalProperties': false,
     },
     'text': {'type': 'string'},
+    'image_prompt': {'type': 'string'},
   },
-  'required': ['kind', 'title', 'summary', 'svg', 'table', 'text'],
+  'required': [
+    'kind',
+    'title',
+    'summary',
+    'svg',
+    'table',
+    'text',
+    'image_prompt',
+  ],
   'additionalProperties': false,
 };
 
@@ -145,9 +164,11 @@ class RedrawRequest {
     this.extraInstructions = '',
     this.previous,
     this.refineInstruction = '',
+    this.artStyle = ArtStyle.original,
   });
 
   final PreparedImage image;
+  final ArtStyle artStyle;
   final RedrawMode mode;
   final String extraInstructions;
   final RedrawResult? previous;
@@ -163,7 +184,16 @@ class RedrawRequest {
           'Treat this image as a "diagram" and redraw it as SVG.',
         RedrawMode.table => 'Treat this image as a "table" and extract it.',
         RedrawMode.text => 'Treat this image as "text" and transcribe it.',
+        RedrawMode.artwork =>
+          'Treat this image as "artwork" and redraw the picture beautifully.',
       });
+    if (mode == RedrawMode.auto || mode == RedrawMode.artwork) {
+      b.writeln(
+        artStyle.prompt.isEmpty
+            ? 'If it is artwork, keep its original art style but make it polished.'
+            : 'If it is artwork, the requested art style is: ${artStyle.prompt}.',
+      );
+    }
     if (extraInstructions.trim().isNotEmpty) {
       b
         ..writeln()

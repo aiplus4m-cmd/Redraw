@@ -4,9 +4,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../models/art_style.dart';
 import '../models/redraw_result.dart';
 import '../services/ai/ai_service.dart';
 import '../services/export_service.dart';
+import '../services/redraw_pipeline.dart';
 import '../services/settings_service.dart';
 import '../widgets/progress_panel.dart';
 import '../widgets/result_views.dart';
@@ -52,12 +54,18 @@ class _ResultScreenState extends State<ResultScreen> {
   bool _editingText = false;
   bool _busy = false;
   int _progressChars = 0;
+  String _progressStatus = '';
   bool _exporting = false;
+
+  /// Artwork: show the vector redraw instead of the AI-painted image.
+  bool _showVector = false;
+  late ArtStyle _artStyle;
 
   @override
   void initState() {
     super.initState();
     _result = widget.initial;
+    _artStyle = widget.settings.artStyle;
     _textCtrl = TextEditingController(text: _result.text);
   }
 
@@ -84,6 +92,11 @@ class _ResultScreenState extends State<ResultScreen> {
       ExportFormat.pdf,
       ExportFormat.png,
     ],
+    RedrawKind.artwork => [
+      ExportFormat.png,
+      ExportFormat.pdf,
+      if (_result.svg.isNotEmpty) ExportFormat.svg,
+    ],
   };
 
   bool get _isMobile => Platform.isAndroid || Platform.isIOS;
@@ -94,9 +107,13 @@ class _ResultScreenState extends State<ResultScreen> {
         // Make sure the preview (not the original photo) is on screen to capture.
         if (_showOriginal) setState(() => _showOriginal = false);
         await WidgetsBinding.instance.endOfFrame;
-        return ExportService.buildPng(_result, _previewKey);
+        return ExportService.buildPng(
+          _result,
+          _previewKey,
+          preferVector: _showVector,
+        );
       case ExportFormat.pdf:
-        return ExportService.buildPdf(_result);
+        return ExportService.buildPdf(_result, preferVector: _showVector);
       case ExportFormat.txt:
         return ExportService.buildTxt(_result);
       case ExportFormat.csv:
@@ -140,41 +157,66 @@ class _ResultScreenState extends State<ResultScreen> {
     }
   }
 
+  bool get _isArtwork => _result.kind == RedrawKind.artwork;
+
+  void _onProgress(String status, int chars) {
+    if (mounted) {
+      setState(() {
+        _progressStatus = status;
+        _progressChars = chars;
+      });
+    }
+  }
+
   Future<void> _refine() async {
     final instruction = _refineCtrl.text.trim();
-    if (instruction.isEmpty) return;
+    // Artwork with no instruction: just repaint (e.g. in another style).
+    if (instruction.isEmpty && !_isArtwork) return;
     _commitTextEdit();
     FocusScope.of(context).unfocus();
     setState(() {
       _busy = true;
       _progressChars = 0;
+      _progressStatus = '';
     });
-    final service = AiService.create(widget.settings.activeConfig);
     try {
-      final updated = await service.redraw(
-        RedrawRequest(
+      final RedrawResult updated;
+      if (instruction.isEmpty) {
+        updated = _result;
+        await RedrawPipeline.paint(
+          widget.settings,
+          updated,
           image: widget.prepared,
-          extraInstructions: widget.settings.extraInstructions,
-          previous: _result,
-          refineInstruction: instruction,
-        ),
-        onProgress: (c) {
-          if (mounted) setState(() => _progressChars = c);
-        },
-      );
+          style: _artStyle,
+          onProgress: _onProgress,
+        );
+      } else {
+        updated = await RedrawPipeline.run(
+          widget.settings,
+          RedrawRequest(
+            image: widget.prepared,
+            mode: _isArtwork ? RedrawMode.artwork : RedrawMode.auto,
+            extraInstructions: widget.settings.extraInstructions,
+            previous: _result,
+            refineInstruction: instruction,
+            artStyle: _artStyle,
+          ),
+          onProgress: _onProgress,
+        );
+      }
       if (!mounted) return;
       setState(() {
         _result = updated;
         _textCtrl.text = updated.text;
         _refineCtrl.clear();
         _showOriginal = false;
+        _showVector = false;
       });
     } on AiException catch (e) {
       _snack(e.message);
     } catch (e) {
       _snack('Đã có lỗi xảy ra: $e');
     } finally {
-      service.close();
       if (mounted) setState(() => _busy = false);
     }
   }
@@ -194,7 +236,14 @@ class _ResultScreenState extends State<ResultScreen> {
       );
     }
     switch (_result.kind) {
-      case RedrawKind.diagram:
+      case RedrawKind.artwork when _result.artImage != null && !_showVector:
+        return InteractiveViewer(
+          maxScale: 8,
+          child: Center(
+            child: Image.memory(_result.artImage!, fit: BoxFit.contain),
+          ),
+        );
+      case RedrawKind.diagram || RedrawKind.artwork:
         return InteractiveViewer(
           maxScale: 8,
           child: Center(
@@ -264,6 +313,7 @@ class _ResultScreenState extends State<ResultScreen> {
                 RedrawKind.diagram => Icons.account_tree_outlined,
                 RedrawKind.table => Icons.table_chart_outlined,
                 RedrawKind.text => Icons.notes_outlined,
+                RedrawKind.artwork => Icons.palette_outlined,
               }, size: 18),
               label: Text(_result.kind.label),
             ),
@@ -284,6 +334,48 @@ class _ResultScreenState extends State<ResultScreen> {
           Text(
             _result.summary,
             style: TextStyle(color: scheme.onSurfaceVariant),
+          ),
+        ],
+        if (_isArtwork &&
+            _result.artImage != null &&
+            _result.svg.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          SegmentedButton<bool>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(
+                value: false,
+                icon: Icon(Icons.auto_awesome_outlined),
+                label: Text('Tranh AI'),
+              ),
+              ButtonSegment(
+                value: true,
+                icon: Icon(Icons.polyline_outlined),
+                label: Text('Bản vector'),
+              ),
+            ],
+            selected: {_showVector},
+            onSelectionChanged: (s) => setState(() {
+              _showVector = s.first;
+              _showOriginal = false;
+            }),
+          ),
+        ],
+        if (_isArtwork && _result.artNote.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Card(
+            color: scheme.secondaryContainer,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.info_outline, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(_result.artNote)),
+                ],
+              ),
+            ),
           ),
         ],
         const SizedBox(height: 20),
@@ -322,26 +414,50 @@ class _ResultScreenState extends State<ResultScreen> {
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const SizedBox(height: 8),
+        if (_isArtwork) ...[
+          Text(
+            'Phong cách tranh',
+            style: TextStyle(color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final style in ArtStyle.values)
+                ChoiceChip(
+                  label: Text(style.label),
+                  selected: _artStyle == style,
+                  onSelected: _busy
+                      ? null
+                      : (_) => setState(() => _artStyle = style),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+        ],
         TextField(
           controller: _refineCtrl,
           enabled: !_busy,
           minLines: 2,
           maxLines: 4,
-          decoration: const InputDecoration(
-            border: OutlineInputBorder(),
-            hintText:
-                'VD: đổi sang bố cục ngang, tô màu xanh lá cho bước kết thúc, '
-                'thêm cột "Ghi chú"…',
+          decoration: InputDecoration(
+            border: const OutlineInputBorder(),
+            hintText: _isArtwork
+                ? 'VD: thêm bầu trời hoàng hôn, cho con mèo đội mũ… '
+                      '(bỏ trống để chỉ vẽ lại theo phong cách đã chọn)'
+                : 'VD: đổi sang bố cục ngang, tô màu xanh lá cho bước kết thúc, '
+                      'thêm cột "Ghi chú"…',
           ),
         ),
         const SizedBox(height: 10),
         if (_busy)
-          ProgressPanel(chars: _progressChars)
+          ProgressPanel(chars: _progressChars, status: _progressStatus)
         else
           FilledButton.icon(
             onPressed: _refine,
             icon: const Icon(Icons.auto_fix_high_outlined),
-            label: const Text('Vẽ lại theo yêu cầu'),
+            label: Text(_isArtwork ? 'Vẽ lại tranh' : 'Vẽ lại theo yêu cầu'),
           ),
       ],
     );

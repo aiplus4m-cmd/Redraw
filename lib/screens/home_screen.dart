@@ -5,9 +5,11 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../models/art_style.dart';
 import '../models/redraw_result.dart';
 import '../services/app_info.dart';
 import '../services/ai/ai_service.dart';
+import '../services/redraw_pipeline.dart';
 import '../services/settings_service.dart';
 import '../widgets/progress_panel.dart';
 import 'about_screen.dart';
@@ -29,6 +31,7 @@ class _HomeScreenState extends State<HomeScreen> {
   RedrawMode _mode = RedrawMode.auto;
   bool _busy = false;
   int _progressChars = 0;
+  String _progressStatus = '';
 
   bool get _canUseCamera => Platform.isAndroid || Platform.isIOS;
 
@@ -96,18 +99,25 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _busy = true;
       _progressChars = 0;
+      _progressStatus = '';
     });
-    final service = AiService.create(widget.settings.activeConfig);
     try {
       final prepared = await prepareImage(bytes);
-      final result = await service.redraw(
+      final result = await RedrawPipeline.run(
+        widget.settings,
         RedrawRequest(
           image: prepared,
           mode: _mode,
           extraInstructions: widget.settings.extraInstructions,
+          artStyle: widget.settings.artStyle,
         ),
-        onProgress: (c) {
-          if (mounted) setState(() => _progressChars = c);
+        onProgress: (status, c) {
+          if (mounted) {
+            setState(() {
+              _progressStatus = status;
+              _progressChars = c;
+            });
+          }
         },
       );
       if (!mounted) return;
@@ -126,7 +136,6 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (e) {
       _showError('Đã có lỗi xảy ra: $e');
     } finally {
-      service.close();
       if (mounted) setState(() => _busy = false);
     }
   }
@@ -201,7 +210,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Sơ đồ vẽ tay → sơ đồ chuyên nghiệp • Bảng nguệch ngoạc → bảng gọn gàng • '
+                  'Sơ đồ vẽ tay → sơ đồ chuyên nghiệp • Bảng nguệch ngoạc → bảng gọn gàng • Tranh vẽ xấu → tranh đẹp • '
                   'Chữ viết tay → văn bản. Xuất ảnh PNG, PDF hoặc tệp văn bản.',
                   style: TextStyle(color: scheme.onSurfaceVariant),
                 ),
@@ -289,6 +298,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         icon: Icon(Icons.notes_outlined),
                         label: Text('Văn bản'),
                       ),
+                      ButtonSegment(
+                        value: RedrawMode.artwork,
+                        icon: Icon(Icons.palette_outlined),
+                        label: Text('Tranh'),
+                      ),
                     ],
                     selected: {_mode},
                     onSelectionChanged: _busy
@@ -296,9 +310,37 @@ class _HomeScreenState extends State<HomeScreen> {
                         : (s) => setState(() => _mode = s.first),
                   ),
                 ),
+                if (_mode == RedrawMode.auto ||
+                    _mode == RedrawMode.artwork) ...[
+                  const SizedBox(height: 20),
+                  Text(
+                    _mode == RedrawMode.artwork
+                        ? 'Phong cách tranh'
+                        : 'Phong cách tranh (khi ảnh là tranh vẽ)',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final style in ArtStyle.values)
+                        ChoiceChip(
+                          label: Text(style.label),
+                          selected: widget.settings.artStyle == style,
+                          onSelected: _busy
+                              ? null
+                              : (_) async {
+                                  await widget.settings.saveArtStyle(style);
+                                  if (mounted) setState(() {});
+                                },
+                        ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 28),
                 if (_busy)
-                  ProgressPanel(chars: _progressChars)
+                  ProgressPanel(chars: _progressChars, status: _progressStatus)
                 else
                   FilledButton.icon(
                     onPressed: _imageBytes == null ? null : _redraw,
@@ -352,7 +394,9 @@ class _ImageDropZone extends StatelessWidget {
                     color: scheme.primary,
                   ),
                   const SizedBox(height: 12),
-                  const Text('Chạm để chọn ảnh bản vẽ / bảng / ghi chép'),
+                  const Text(
+                    'Chạm để chọn ảnh sơ đồ / bảng / ghi chép / tranh vẽ',
+                  ),
                   const SizedBox(height: 4),
                   Text(
                     'JPG, PNG, WEBP',

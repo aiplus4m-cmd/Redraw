@@ -7,6 +7,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -120,8 +121,33 @@ class ExportService {
     return data!.buffer.asUint8List();
   }
 
-  static Future<Uint8List> buildPng(RedrawResult result, GlobalKey previewKey) {
-    if (result.kind == RedrawKind.diagram && result.svg.isNotEmpty) {
+  /// Re-encodes JPEG/WEBP output of image models as PNG.
+  static Uint8List ensurePng(Uint8List bytes) {
+    const sig = [0x89, 0x50, 0x4E, 0x47];
+    if (bytes.length > 4 &&
+        List.generate(4, (i) => bytes[i]).join() == sig.join()) {
+      return bytes;
+    }
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) return bytes;
+    return img.encodePng(decoded);
+  }
+
+  /// Whether an artwork result shows the AI-painted image (vs. the vector).
+  static bool usesArtImage(RedrawResult r, {bool preferVector = false}) =>
+      r.kind == RedrawKind.artwork && r.artImage != null && !preferVector;
+
+  static Future<Uint8List> buildPng(
+    RedrawResult result,
+    GlobalKey previewKey, {
+    bool preferVector = false,
+  }) async {
+    if (usesArtImage(result, preferVector: preferVector)) {
+      return ensurePng(result.artImage!);
+    }
+    if ((result.kind == RedrawKind.diagram ||
+            result.kind == RedrawKind.artwork) &&
+        result.svg.isNotEmpty) {
       return svgToPng(result.svg);
     }
     return captureBoundary(previewKey);
@@ -132,6 +158,7 @@ class ExportService {
   static Future<Uint8List> buildPdf(
     RedrawResult result, {
     Uint8List? diagramPng,
+    bool preferVector = false,
   }) async {
     final theme = await _pdfTheme();
     final doc = pw.Document(
@@ -175,8 +202,12 @@ class ExportService {
     );
 
     switch (result.kind) {
-      case RedrawKind.diagram:
-        final png = diagramPng ?? await svgToPng(result.svg);
+      case RedrawKind.diagram || RedrawKind.artwork:
+        final png =
+            diagramPng ??
+            (usesArtImage(result, preferVector: preferVector)
+                ? ensurePng(result.artImage!)
+                : await svgToPng(result.svg));
         final image = pw.MemoryImage(png);
         final landscape = (image.width ?? 1) > (image.height ?? 1) * 1.15;
         doc.addPage(
