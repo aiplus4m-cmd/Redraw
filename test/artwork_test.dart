@@ -7,7 +7,6 @@ import 'package:image/image.dart' as img;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ve_lai_cho_dep/models/art_style.dart';
 import 'package:ve_lai_cho_dep/models/redraw_result.dart';
-import 'package:ve_lai_cho_dep/services/ai/ai_provider.dart';
 import 'package:ve_lai_cho_dep/services/ai/ai_service.dart';
 import 'package:ve_lai_cho_dep/services/ai/image_service.dart';
 import 'package:ve_lai_cho_dep/services/export_service.dart';
@@ -73,7 +72,7 @@ void main() {
 
   test('pipeline repaints artwork with OpenAI images/edits', () async {
     final settings = await _settings({'openai_api_key': 'oa-key'});
-    expect(settings.imageBackend?.config.provider, AiProvider.openai);
+    expect(settings.imageBackend?.kind, ImageBackendKind.openai);
     final client = MockClient.streaming((req, body) async {
       if (req.url.host == 'api.anthropic.com') {
         await body.drain<void>();
@@ -213,5 +212,109 @@ void main() {
       final vectorPdf = await ExportService.buildPdf(r, preferVector: true);
       expect(ascii.decode(vectorPdf.sublist(0, 4)), '%PDF');
     });
+  });
+
+  test('Cloudflare FLUX.2: multipart with small reference image', () async {
+    final settings = await _settings({
+      'image_engine': 'cloudflare',
+      'cloudflare_account_id': '0123456789abcdef0123456789abcdef',
+      'cloudflare_api_token': 'cf-token',
+    });
+    final backend = settings.imageBackend!;
+    expect(backend.kind, ImageBackendKind.cloudflare);
+    expect(backend.model, defaultCloudflareImageModel);
+
+    final source = img.encodeJpg(img.Image(width: 1600, height: 900));
+    final client = MockClient.streaming((req, body) async {
+      expect(
+        req.url.toString(),
+        'https://api.cloudflare.com/client/v4/accounts/'
+        '0123456789abcdef0123456789abcdef/ai/run/'
+        '@cf/black-forest-labs/flux-2-klein-4b',
+      );
+      expect(req.headers['authorization'], 'Bearer cf-token');
+      final form = latin1.decode(await body.toBytes());
+      expect(form, contains('name="input_image_0"'));
+      expect(form, contains('name="prompt"'));
+      expect(form, contains('name="width"\r\n\r\n1024'));
+      expect(form, contains('name="height"\r\n\r\n576'));
+      return http.StreamedResponse(
+        Stream.value(
+          utf8.encode(
+            jsonEncode({
+              'result': {'image': base64Encode(_pngBytes)},
+              'success': true,
+              'errors': [],
+            }),
+          ),
+        ),
+        200,
+      );
+    });
+    final bytes = await ImageService(backend, client: client).repaint(
+      source: PreparedImage(base64Encode(source), 'image/jpeg'),
+      prompt: 'x',
+    );
+    expect(bytes, _pngBytes);
+  });
+
+  test('Cloudflare reference image is under 512 px', () {
+    final ref = cloudflareReference(
+      img.encodeJpg(img.Image(width: 900, height: 1600)),
+    );
+    final decoded = img.decodePng(ref.bytes)!;
+    expect(decoded.width < 512 && decoded.height < 512, isTrue);
+    expect(ref.outHeight, 1024);
+    expect(ref.outWidth, 576);
+  });
+
+  test('Cloudflare errors are readable and auto falls back to it', () async {
+    final settings = await _settings({
+      'cloudflare_account_id': '0123456789abcdef0123456789abcdef',
+      'cloudflare_api_token': 'cf-token',
+    });
+    // No OpenAI/Gemini keys: auto picks Cloudflare.
+    expect(settings.imageBackend?.kind, ImageBackendKind.cloudflare);
+    final client = MockClient.streaming((req, body) async {
+      await body.drain<void>();
+      return http.StreamedResponse(
+        Stream.value(
+          utf8.encode(
+            jsonEncode({
+              'success': false,
+              'errors': [
+                {'code': 4006, 'message': 'daily free allocation exceeded'},
+              ],
+            }),
+          ),
+        ),
+        429,
+      );
+    });
+    expect(
+      ImageService(settings.imageBackend!, client: client).repaint(
+        source: PreparedImage(
+          base64Encode(img.encodeJpg(img.Image(width: 8, height: 8))),
+          'image/jpeg',
+        ),
+        prompt: 'x',
+      ),
+      throwsA(
+        isA<AiException>().having(
+          (e) => e.message,
+          'message',
+          contains('daily free allocation exceeded'),
+        ),
+      ),
+    );
+  });
+
+  test('invalid Cloudflare account ID disables the backend', () async {
+    final settings = await _settings({
+      'image_engine': 'cloudflare',
+      'cloudflare_account_id': 'abc',
+      'cloudflare_api_token': 'cf-token',
+    });
+    expect(settings.imageBackend, isNull);
   });
 }

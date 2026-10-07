@@ -58,9 +58,12 @@ class RedrawPipeline {
     final backend = settings.imageBackend;
     if (backend == null) {
       if (settings.imageEngine != ImageEngine.vector) {
-        result.artNote =
-            'Đang hiển thị bản vẽ vector. Nhập API key OpenAI hoặc Google '
-            'Gemini trong Cài đặt để AI vẽ lại tranh đẹp như tranh thật.';
+        result.artNote = settings.imageEngine == ImageEngine.cloudflare
+            ? 'Đang hiển thị bản vẽ vector. Nhập Cloudflare Account ID và API '
+                  'token trong Cài đặt → Vẽ lại tranh để dùng FLUX.2 miễn phí.'
+            : 'Đang hiển thị bản vẽ vector. Nhập API key OpenAI, Google Gemini '
+                  'hoặc Cloudflare (miễn phí) trong Cài đặt để AI vẽ lại tranh '
+                  'đẹp như tranh thật.';
       }
       return;
     }

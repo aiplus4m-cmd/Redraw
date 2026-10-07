@@ -314,6 +314,12 @@ String describeHttpError(int status, String body, String providerName) {
     final err = decoded is List ? decoded.first : decoded;
     final e = (err as Map)['error'];
     apiMessage = e is Map ? e['message']?.toString() : e?.toString();
+    // Cloudflare: {"success": false, "errors": [{"code": ..., "message": ...}]}
+    final errors = err['errors'];
+    if (apiMessage == null && errors is List && errors.isNotEmpty) {
+      final first = errors.first;
+      apiMessage = first is Map ? first['message']?.toString() : '$first';
+    }
   } catch (_) {
     if (body.trim().isNotEmpty && body.length < 300) apiMessage = body.trim();
   }

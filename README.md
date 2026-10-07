@@ -51,8 +51,18 @@ Khi ảnh là tranh vẽ, ứng dụng làm 2 bước:
 2. Nếu có API key **OpenAI** hoặc **Google Gemini**, model **tạo ảnh** vẽ lại bức tranh dựa trên ảnh gốc (giữ bố cục) theo **phong cách** bạn chọn:
    - OpenAI: `POST /v1/images/edits`, mặc định `gpt-image-2`
    - Gemini: `generateContent` với `responseModalities: ["IMAGE"]`, mặc định `gemini-3.1-flash-image-preview`
+   - **Cloudflare Workers AI (miễn phí theo ngày)**: FLUX.2, mặc định `@cf/black-forest-labs/flux-2-klein-4b` (~110 neuron/ảnh → khoảng 90 ảnh/ngày trong hạn mức miễn phí 10.000 neuron/ngày)
 
-Cấu hình ở **Cài đặt → Vẽ lại tranh** (Tự động / OpenAI / Gemini / Chỉ vector, đổi được tên model tạo ảnh). Ở màn hình kết quả có thể chuyển giữa **Tranh AI** và **Bản vector**, đổi phong cách rồi bấm **Vẽ lại tranh** (không cần phân tích lại ảnh), hoặc gõ yêu cầu như “thêm bầu trời hoàng hôn”.
+#### Dùng Cloudflare Workers AI miễn phí
+
+1. Đăng ký tài khoản miễn phí tại [dash.cloudflare.com](https://dash.cloudflare.com).
+2. Lấy **Account ID**: mở trang *AI → Workers AI* (hoặc trang tổng quan tài khoản), sao chép *Account ID* (32 ký tự).
+3. Tạo **API token**: *My Profile → API Tokens → Create Token* → chọn mẫu **Workers AI** → *Create Token* → sao chép.
+4. Trong app: **Cài đặt → Vẽ lại tranh** → chọn *Cloudflare Workers AI* (hoặc *Tự động*), dán Account ID + token → **Kiểm tra Cloudflare** → **Lưu**.
+
+Lưu ý: FLUX.2 nhận ảnh tham chiếu nhỏ hơn 512×512 nên app tự thu nhỏ ảnh gốc khi gửi; ảnh trả về rộng 1024px. `flux-2-klein-9b` / `flux-2-dev` đẹp hơn nhưng tốn hạn mức hơn nhiều. Hết hạn mức ngày, Cloudflare báo lỗi và app hiển thị bản vector.
+
+Cấu hình ở **Cài đặt → Vẽ lại tranh** (Tự động / OpenAI / Gemini / Cloudflare / Chỉ vector, đổi được tên model tạo ảnh). Ở màn hình kết quả có thể chuyển giữa **Tranh AI** và **Bản vector**, đổi phong cách rồi bấm **Vẽ lại tranh** (không cần phân tích lại ảnh), hoặc gõ yêu cầu như “thêm bầu trời hoàng hôn”.
 
 ### Nhà cung cấp AI
 
@@ -91,7 +101,7 @@ Mã nguồn chính:
 | `lib/services/ai/gemini_service.dart` | Google Gemini `streamGenerateContent` |
 | `lib/services/ai/openai_service.dart` | OpenAI và mọi API tương thích OpenAI (`/chat/completions`) |
 | `lib/services/ai/ai_common.dart` | Prompt, JSON schema, xử lý ảnh, đọc SSE, thông báo lỗi |
-| `lib/services/ai/image_service.dart` | Vẽ lại tranh bằng OpenAI Images / Gemini image |
+| `lib/services/ai/image_service.dart` | Vẽ lại tranh bằng OpenAI Images / Gemini image / Cloudflare Workers AI |
 | `lib/services/redraw_pipeline.dart` | Quy trình: phân tích ảnh → (nếu là tranh) tạo ảnh |
 | `lib/services/export_service.dart` | Tạo PNG / PDF / TXT / CSV, lưu & chia sẻ tệp |
 | `lib/screens/` | Màn hình Trang chính, Kết quả, Cài đặt, Giới thiệu |

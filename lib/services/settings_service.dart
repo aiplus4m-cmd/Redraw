@@ -18,6 +18,9 @@ class SettingsService extends ChangeNotifier {
   static const _kOpenAiImageModel = 'openai_image_model';
   static const _kGeminiImageModel = 'google_image_model';
   static const _kArtStyle = 'art_style';
+  static const _kCfAccount = 'cloudflare_account_id';
+  static const _kCfToken = 'cloudflare_api_token';
+  static const _kCfModel = 'cloudflare_image_model';
 
   final SharedPreferences _prefs;
 
@@ -68,15 +71,33 @@ class SettingsService extends ChangeNotifier {
 
   ArtStyle get artStyle => ArtStyle.parse(_prefs.getString(_kArtStyle));
 
+  String get cloudflareAccountId => _prefs.getString(_kCfAccount) ?? '';
+  String get cloudflareToken => _prefs.getString(_kCfToken) ?? '';
+  String get cloudflareImageModel =>
+      _nonEmpty(_prefs.getString(_kCfModel), defaultCloudflareImageModel);
+
   static String _nonEmpty(String? v, String fallback) =>
       (v == null || v.trim().isEmpty) ? fallback : v.trim();
 
   ImageBackend? _backendFor(AiProvider p) {
     final config = configFor(p);
     if (config.apiKey.trim().isEmpty) return null;
-    return ImageBackend(
+    return ImageBackend.fromProvider(
       config,
       p == AiProvider.google ? geminiImageModel : openAiImageModel,
+    );
+  }
+
+  ImageBackend? get _cloudflareBackend {
+    if (cloudflareToken.trim().isEmpty ||
+        !ImageBackend.isValidCloudflareAccountId(cloudflareAccountId)) {
+      return null;
+    }
+    return ImageBackend(
+      kind: ImageBackendKind.cloudflare,
+      apiKey: cloudflareToken.trim(),
+      model: cloudflareImageModel,
+      accountId: cloudflareAccountId.trim(),
     );
   }
 
@@ -85,9 +106,12 @@ class SettingsService extends ChangeNotifier {
   ImageBackend? get imageBackend => switch (imageEngine) {
     ImageEngine.openai => _backendFor(AiProvider.openai),
     ImageEngine.google => _backendFor(AiProvider.google),
+    ImageEngine.cloudflare => _cloudflareBackend,
     ImageEngine.vector => null,
     ImageEngine.auto =>
-      _backendFor(AiProvider.openai) ?? _backendFor(AiProvider.google),
+      _backendFor(AiProvider.openai) ??
+          _backendFor(AiProvider.google) ??
+          _cloudflareBackend,
   };
 
   Future<void> saveArtStyle(ArtStyle style) async {
@@ -102,7 +126,19 @@ class SettingsService extends ChangeNotifier {
     ImageEngine? imageEngine,
     String? openAiImageModel,
     String? geminiImageModel,
+    String? cloudflareAccountId,
+    String? cloudflareToken,
+    String? cloudflareImageModel,
   }) async {
+    if (cloudflareAccountId != null) {
+      await _prefs.setString(_kCfAccount, cloudflareAccountId.trim());
+    }
+    if (cloudflareToken != null) {
+      await _prefs.setString(_kCfToken, cloudflareToken.trim());
+    }
+    if (cloudflareImageModel != null) {
+      await _prefs.setString(_kCfModel, cloudflareImageModel.trim());
+    }
     if (imageEngine != null) {
       await _prefs.setString(_kImageEngine, imageEngine.name);
     }

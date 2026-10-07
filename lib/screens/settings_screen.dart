@@ -41,6 +41,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late ImageEngine _imageEngine;
   late final TextEditingController _openAiImageCtrl;
   late final TextEditingController _geminiImageCtrl;
+  late final TextEditingController _cfAccountCtrl;
+  late final TextEditingController _cfTokenCtrl;
+  late final TextEditingController _cfModelCtrl;
+  bool _cfObscure = true;
+  bool _cfTesting = false;
   bool _obscure = true;
   bool _testing = false;
 
@@ -74,6 +79,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _geminiImageCtrl = TextEditingController(
       text: widget.settings.geminiImageModel,
     );
+    _cfAccountCtrl = TextEditingController(
+      text: widget.settings.cloudflareAccountId,
+    );
+    _cfTokenCtrl = TextEditingController(text: widget.settings.cloudflareToken);
+    _cfModelCtrl = TextEditingController(
+      text: widget.settings.cloudflareImageModel,
+    );
   }
 
   @override
@@ -84,6 +96,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _instrCtrl.dispose();
     _openAiImageCtrl.dispose();
     _geminiImageCtrl.dispose();
+    _cfAccountCtrl.dispose();
+    _cfTokenCtrl.dispose();
+    _cfModelCtrl.dispose();
     super.dispose();
   }
 
@@ -106,6 +121,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _snack(problem);
       return;
     }
+    final cfAccount = _cfAccountCtrl.text.trim();
+    if (cfAccount.isNotEmpty &&
+        !ImageBackend.isValidCloudflareAccountId(cfAccount)) {
+      _snack('Cloudflare Account ID phải gồm 32 ký tự (0-9, a-f).');
+      return;
+    }
     await widget.settings.save(
       active: _provider,
       configs: {for (final p in AiProvider.values) p: _configOf(p)},
@@ -113,6 +134,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       imageEngine: _imageEngine,
       openAiImageModel: _openAiImageCtrl.text,
       geminiImageModel: _geminiImageCtrl.text,
+      cloudflareAccountId: _cfAccountCtrl.text,
+      cloudflareToken: _cfTokenCtrl.text,
+      cloudflareImageModel: _cfModelCtrl.text,
     );
     if (!mounted) return;
     _snack('Đã lưu cài đặt');
@@ -273,8 +297,146 @@ class _SettingsScreenState extends State<SettingsScreen> {
           'Model tạo ảnh Gemini',
           defaultGeminiImageModel,
         ),
+      if (_imageEngine == ImageEngine.auto ||
+          _imageEngine == ImageEngine.cloudflare)
+        ..._cloudflareFields(hintStyle),
     ];
   }
+
+  Future<void> _testCloudflare() async {
+    final account = _cfAccountCtrl.text.trim();
+    final token = _cfTokenCtrl.text.trim();
+    if (!ImageBackend.isValidCloudflareAccountId(account) || token.isEmpty) {
+      _snack('Hãy nhập Account ID (32 ký tự) và API token của Cloudflare.');
+      return;
+    }
+    setState(() => _cfTesting = true);
+    try {
+      _snack(await ImageService.verifyCloudflare(account, token));
+    } on AiException catch (e) {
+      _snack(e.message);
+    } catch (e) {
+      _snack('Không kiểm tra được Cloudflare: $e');
+    } finally {
+      if (mounted) setState(() => _cfTesting = false);
+    }
+  }
+
+  List<Widget> _cloudflareFields(TextStyle hintStyle) => [
+    const SizedBox(height: 20),
+    Text(
+      'Cloudflare Workers AI (miễn phí ~90 ảnh/ngày)',
+      style: Theme.of(context).textTheme.titleSmall,
+    ),
+    const SizedBox(height: 6),
+    Text(
+      '1) Đăng ký tài khoản miễn phí tại dash.cloudflare.com.\n'
+      '2) Account ID: vào trang Workers AI (hoặc trang tổng quan tài khoản), '
+      'sao chép "Account ID".\n'
+      '3) API token: My Profile → API Tokens → Create Token → mẫu '
+      '"Workers AI" → Create, rồi sao chép token.',
+      style: hintStyle,
+    ),
+    Wrap(
+      spacing: 4,
+      children: [
+        TextButton.icon(
+          onPressed: () => launchUrl(
+            Uri.parse(
+              'https://dash.cloudflare.com/?to=/:account/ai/workers-ai',
+            ),
+            mode: LaunchMode.externalApplication,
+          ),
+          icon: const Icon(Icons.open_in_new, size: 18),
+          label: const Text('Mở Workers AI'),
+        ),
+        TextButton.icon(
+          onPressed: () => launchUrl(
+            Uri.parse('https://dash.cloudflare.com/profile/api-tokens'),
+            mode: LaunchMode.externalApplication,
+          ),
+          icon: const Icon(Icons.open_in_new, size: 18),
+          label: const Text('Tạo API token'),
+        ),
+      ],
+    ),
+    const SizedBox(height: 8),
+    TextField(
+      controller: _cfAccountCtrl,
+      autocorrect: false,
+      decoration: const InputDecoration(
+        border: OutlineInputBorder(),
+        labelText: 'Account ID',
+        hintText: '32 ký tự, ví dụ 0123456789abcdef0123456789abcdef',
+        prefixIcon: Icon(Icons.badge_outlined),
+      ),
+    ),
+    const SizedBox(height: 12),
+    TextField(
+      controller: _cfTokenCtrl,
+      obscureText: _cfObscure,
+      autocorrect: false,
+      enableSuggestions: false,
+      decoration: InputDecoration(
+        border: const OutlineInputBorder(),
+        labelText: 'API token',
+        prefixIcon: const Icon(Icons.key_outlined),
+        suffixIcon: IconButton(
+          icon: Icon(
+            _cfObscure
+                ? Icons.visibility_outlined
+                : Icons.visibility_off_outlined,
+          ),
+          onPressed: () => setState(() => _cfObscure = !_cfObscure),
+        ),
+      ),
+    ),
+    const SizedBox(height: 12),
+    TextField(
+      controller: _cfModelCtrl,
+      autocorrect: false,
+      decoration: const InputDecoration(
+        border: OutlineInputBorder(),
+        labelText: 'Model tạo ảnh Cloudflare',
+        hintText: defaultCloudflareImageModel,
+        prefixIcon: Icon(Icons.image_outlined),
+      ),
+    ),
+    const SizedBox(height: 6),
+    Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final m in cloudflareImageModels)
+          ChoiceChip(
+            label: Text(m.split('/').last),
+            selected: _cfModelCtrl.text.trim() == m,
+            onSelected: (_) => setState(() => _cfModelCtrl.text = m),
+          ),
+      ],
+    ),
+    const SizedBox(height: 6),
+    Text(
+      'flux-2-klein-4b: nhanh, ít tốn hạn mức nhất (khuyên dùng). '
+      'flux-2-klein-9b / flux-2-dev: đẹp hơn nhưng tốn hạn mức hơn nhiều.',
+      style: hintStyle,
+    ),
+    const SizedBox(height: 10),
+    Align(
+      alignment: Alignment.centerLeft,
+      child: OutlinedButton.icon(
+        onPressed: _cfTesting ? null : _testCloudflare,
+        icon: _cfTesting
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.wifi_tethering),
+        label: const Text('Kiểm tra Cloudflare'),
+      ),
+    ),
+  ];
 
   @override
   Widget build(BuildContext context) {

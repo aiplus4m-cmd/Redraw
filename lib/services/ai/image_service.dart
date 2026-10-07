@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 import 'package:http_parser/http_parser.dart';
+import 'package:image/image.dart' as img;
 
 import '../../models/art_style.dart';
 import 'ai_common.dart';
@@ -11,9 +12,10 @@ import 'ai_provider.dart';
 
 /// Which image-generation back-end repaints artwork.
 enum ImageEngine {
-  auto('Tự động (OpenAI → Gemini → vector)'),
+  auto('Tự động (OpenAI → Gemini → Cloudflare → vector)'),
   openai('OpenAI (GPT Image)'),
   google('Google Gemini (ảnh)'),
+  cloudflare('Cloudflare Workers AI (FLUX.2, miễn phí theo ngày)'),
   vector('Chỉ vẽ vector (không tạo ảnh AI)');
 
   const ImageEngine(this.label);
@@ -27,15 +29,54 @@ enum ImageEngine {
 
 const defaultOpenAiImageModel = 'gpt-image-2';
 const defaultGeminiImageModel = 'gemini-3.1-flash-image-preview';
+const defaultCloudflareImageModel = '@cf/black-forest-labs/flux-2-klein-4b';
+const cloudflareImageModels = [
+  '@cf/black-forest-labs/flux-2-klein-4b',
+  '@cf/black-forest-labs/flux-2-klein-9b',
+  '@cf/black-forest-labs/flux-2-dev',
+];
+const cloudflareApiBase = 'https://api.cloudflare.com/client/v4';
 
-/// A resolved image back-end: provider connection + image model.
+enum ImageBackendKind { openai, google, cloudflare }
+
+/// A resolved image back-end: credentials, endpoint and image model.
 class ImageBackend {
-  const ImageBackend(this.config, this.model);
+  const ImageBackend({
+    required this.kind,
+    required this.apiKey,
+    required this.model,
+    this.baseUrl = '',
+    this.accountId = '',
+  });
 
-  final ProviderConfig config;
+  /// OpenAI / Gemini, reusing the key of the matching AI provider.
+  factory ImageBackend.fromProvider(ProviderConfig config, String model) =>
+      ImageBackend(
+        kind: config.provider == AiProvider.google
+            ? ImageBackendKind.google
+            : ImageBackendKind.openai,
+        apiKey: config.apiKey.trim(),
+        model: model,
+        baseUrl: config.normalizedBaseUrl,
+      );
+
+  final ImageBackendKind kind;
+  final String apiKey;
   final String model;
+  final String baseUrl;
 
-  String get name => config.provider.shortLabel;
+  /// Cloudflare account ID.
+  final String accountId;
+
+  String get name => switch (kind) {
+    ImageBackendKind.openai => 'OpenAI',
+    ImageBackendKind.google => 'Gemini',
+    ImageBackendKind.cloudflare => 'Cloudflare',
+  };
+
+  /// Cloudflare account IDs are 32 hex characters.
+  static bool isValidCloudflareAccountId(String id) =>
+      RegExp(r'^[0-9a-fA-F]{32}$').hasMatch(id.trim());
 }
 
 /// Repaints a picture with an image-generation model, using the original
@@ -82,16 +123,17 @@ class ImageService {
   Future<Uint8List> repaint({
     required PreparedImage source,
     required String prompt,
-  }) => switch (backend.config.provider) {
-    AiProvider.google => _gemini(source, prompt),
-    _ => _openAi(source, prompt),
+  }) => switch (backend.kind) {
+    ImageBackendKind.google => _gemini(source, prompt),
+    ImageBackendKind.openai => _openAi(source, prompt),
+    ImageBackendKind.cloudflare => _cloudflare(source, prompt),
   };
 
   // ------------------------------------------------------------- OpenAI
 
   Future<Uint8List> _openAi(PreparedImage source, String prompt) async {
-    final key = backend.config.apiKey.trim();
-    final uri = Uri.parse('${backend.config.normalizedBaseUrl}/images/edits');
+    final key = backend.apiKey;
+    final uri = Uri.parse('${backend.baseUrl}/images/edits');
     final imageBytes = base64Decode(source.base64Data);
 
     http.MultipartRequest build(Map<String, String> fields) =>
@@ -136,14 +178,12 @@ class ImageService {
   Future<Uint8List> _gemini(PreparedImage source, String prompt) async {
     var model = backend.model.trim();
     if (model.startsWith('models/')) model = model.substring(7);
-    final uri = Uri.parse(
-      '${backend.config.normalizedBaseUrl}/models/$model:generateContent',
-    );
+    final uri = Uri.parse('${backend.baseUrl}/models/$model:generateContent');
 
     http.Request build(List<String> modalities) => http.Request('POST', uri)
       ..headers.addAll({
         'content-type': 'application/json',
-        'x-goog-api-key': backend.config.apiKey.trim(),
+        'x-goog-api-key': backend.apiKey,
       })
       ..body = jsonEncode({
         'contents': [
@@ -195,6 +235,77 @@ class ImageService {
     throw lastError!;
   }
 
+  // --------------------------------------------------------- Cloudflare
+
+  /// Workers AI FLUX.2 models take multipart form data; reference images
+  /// must be smaller than 512x512.
+  Future<Uint8List> _cloudflare(PreparedImage source, String prompt) async {
+    final ref = await compute(
+      cloudflareReference,
+      base64Decode(source.base64Data),
+    );
+    final uri = Uri.parse(
+      '$cloudflareApiBase/accounts/${backend.accountId.trim()}/ai/run/'
+      '${backend.model.trim()}',
+    );
+
+    http.MultipartRequest build(Map<String, String> fields) =>
+        http.MultipartRequest('POST', uri)
+          ..headers['authorization'] = 'Bearer ${backend.apiKey}'
+          ..fields.addAll({'prompt': prompt, ...fields})
+          ..files.add(
+            http.MultipartFile.fromBytes(
+              'input_image_0',
+              ref.bytes,
+              filename: 'input.png',
+              contentType: MediaType('image', 'png'),
+            ),
+          );
+
+    AiException? lastError;
+    for (final fields in [
+      {'width': '${ref.outWidth}', 'height': '${ref.outHeight}'},
+      <String, String>{},
+    ]) {
+      try {
+        final json = await _send(build(fields));
+        final result = json['result'];
+        final b64 = (result is Map ? result['image'] : null) ?? json['image'];
+        if (b64 is String && b64.isNotEmpty) return base64Decode(b64);
+        throw AiException('Cloudflare không trả về ảnh.');
+      } on BadRequestException catch (e) {
+        lastError = e;
+      }
+    }
+    throw lastError!;
+  }
+
+  /// Checks that the account ID and token can use Workers AI.
+  static Future<String> verifyCloudflare(
+    String accountId,
+    String token, {
+    http.Client? client,
+  }) async {
+    final c = client ?? http.Client();
+    try {
+      final json = await getJson(
+        c,
+        Uri.parse(
+          '$cloudflareApiBase/accounts/${accountId.trim()}/ai/models/search'
+          '?per_page=1',
+        ),
+        {'authorization': 'Bearer ${token.trim()}'},
+        providerName: 'Cloudflare',
+      );
+      if (json['success'] == false) {
+        throw AiException('Cloudflare từ chối token hoặc Account ID.');
+      }
+      return 'Kết nối Cloudflare Workers AI thành công.';
+    } finally {
+      if (client == null) c.close();
+    }
+  }
+
   // ------------------------------------------------------------- helpers
 
   Future<Map<String, dynamic>> _send(http.BaseRequest request) async {
@@ -233,4 +344,31 @@ class ImageService {
   }
 
   void close() => client.close();
+}
+
+/// Reference image for Cloudflare FLUX.2 plus the output size to request.
+class CloudflareReference {
+  CloudflareReference(this.bytes, this.outWidth, this.outHeight);
+  final Uint8List bytes;
+  final int outWidth;
+  final int outHeight;
+}
+
+/// Downscales [jpeg] below 512x512 (PNG) and picks an output size with the
+/// same aspect ratio: longest edge 1024, multiples of 16, within 256-1920.
+CloudflareReference cloudflareReference(Uint8List jpeg) {
+  final decoded = img.decodeImage(jpeg);
+  if (decoded == null) {
+    throw AiException('Không đọc được ảnh để gửi tới Cloudflare.');
+  }
+  final w = decoded.width, h = decoded.height;
+  final small = w >= h
+      ? img.copyResize(decoded, width: w > 511 ? 511 : w)
+      : img.copyResize(decoded, height: h > 511 ? 511 : h);
+
+  int snap(double v) => ((v / 16).round() * 16).clamp(256, 1920);
+  final ratio = w / h;
+  final outW = ratio >= 1 ? 1024 : snap(1024 * ratio);
+  final outH = ratio >= 1 ? snap(1024 / ratio) : 1024;
+  return CloudflareReference(img.encodePng(small), outW, outH);
 }
